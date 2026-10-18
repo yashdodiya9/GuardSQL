@@ -1,6 +1,7 @@
 import psycopg
 import pytest
 
+from guardsql.guardrails.ast_validator import Code, validate_sql
 from guardsql.schema.introspect import SchemaSnapshot, introspect
 
 pytestmark = pytest.mark.integration
@@ -55,3 +56,10 @@ def test_comments_and_keys_are_read(snapshot: SchemaSnapshot) -> None:
     )
     items = snapshot.table("order_items")
     assert {fk.ref_table for fk in items.foreign_keys} == {"orders", "products"}
+
+
+def test_introspected_policy_drives_the_validator(snapshot: SchemaSnapshot) -> None:
+    policy = snapshot.to_policy(RESTRICTED)
+    assert validate_sql("SELECT first_name FROM customers LIMIT 3", policy).ok
+    assert validate_sql("SELECT email FROM customers", policy).code == Code.RESTRICTED_COLUMN
+    assert validate_sql("SELECT secret FROM customers", policy).code == Code.UNKNOWN_COLUMN
