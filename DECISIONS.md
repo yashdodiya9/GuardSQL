@@ -35,3 +35,23 @@ measures this false-positive rate and the allowlist grows from data.
 **Context:** pg_catalog lists every column to every role, ignoring column grants.
 **Decision:** Introspection reads information_schema.columns as the read-only role.
 **Consequences:** Restricted column names never reach the LLM prompt or the validator policy.
+
+## ADR-007: Two independent limits on query cost
+**Context:** A valid SELECT can still be ruinously expensive (large cross joins).
+**Decision:** An EXPLAIN-based cost gate rejects queries the planner predicts are too
+expensive, and a per-transaction statement timeout cancels anything that runs too long anyway.
+**Consequences:** The gate is cheap but estimate-based; the timeout is exact but only acts
+after resources are spent. Neither alone is enough. MAX_PLAN_COST is relative to data size
+and is calibrated from measured query costs in the eval harness.
+
+## ADR-008: One pooled, read-only execution path
+**Context:** Generated SQL must never reach the database through an unchecked route.
+**Decision:** Only ReadOnlyExecutor runs SQL. It accepts only successful validation results,
+uses a bounded pool of READ ONLY connections, applies limits with transaction-local settings,
+and always rolls back.
+**Consequences:** A single place to audit, log and test. Limits cannot leak between requests.
+
+## ADR-009: Guardrail policy lives in configuration
+**Context:** Which columns are sensitive differs per deployment.
+**Decision:** Restricted columns, row limits and cost limits are settings with validated bounds.
+**Consequences:** Policy changes need no code change. Invalid values fail at startup.
