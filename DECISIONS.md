@@ -55,3 +55,25 @@ and always rolls back.
 **Context:** Which columns are sensitive differs per deployment.
 **Decision:** Restricted columns, row limits and cost limits are settings with validated bounds.
 **Consequences:** Policy changes need no code change. Invalid values fail at startup.
+
+## ADR-010: Provider-neutral LLM interface with normalized errors
+**Context:** Free tiers change, and different models suit different stages (cheap first, stronger on retry).
+**Decision:** The app depends only on an LLMClient protocol. Ollama and Gemini are thin adapters;
+a scripted fake serves tests and keyless demos. Every provider failure becomes one LLMError
+with a kind, and only transient kinds (timeout, outage, rate limit) are retried.
+**Consequences:** Providers swap via configuration. CI never calls a real model.
+Retries are bounded so a request never hangs.
+
+## ADR-011: The model's output is a candidate, never a command
+**Context:** Prompts cannot reliably stop prompt injection or hallucination.
+**Decision:** The generator only extracts a candidate SELECT (or an explicit refusal). Anything
+else, including SQL buried in prose, is treated as "no SQL". Candidates then go through the
+validator and the read-only executor.
+**Consequences:** Safety does not depend on the prompt. The prompt only improves accuracy.
+
+## ADR-012: Static prompt prefix, variable suffix
+**Context:** Schema and rules are long and identical on every request; the question is short.
+**Decision:** Rules and schema live in the system prompt, byte-identical per request. The date
+and question go last.
+**Consequences:** Providers that cache repeated prefixes can bill and process the long part once.
+Cache savings will be measured in M9.
