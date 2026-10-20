@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Literal
 
 from psycopg.conninfo import make_conninfo
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,25 @@ class Settings(BaseSettings):
     statement_timeout_ms: int = Field(default=3000, ge=50)
     # Planner cost units (not seconds). Calibrate against your own data; see DECISIONS.md.
     max_plan_cost: float = Field(default=50_000.0, gt=0)
+
+    # LLM
+    llm_provider: Literal["fake", "ollama", "gemini"] = "ollama"
+    llm_timeout_s: float = Field(default=60.0, gt=0)
+    llm_max_output_tokens: int = Field(default=512, ge=16)
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    llm_max_attempts: int = Field(default=3, ge=1, le=6)
+    max_question_chars: int = Field(default=500, ge=10)
+
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5-coder:7b"
+    ollama_num_ctx: int = Field(default=4096, ge=1024)
+
+    # SecretStr: never shown in repr(), logs or tracebacks of the settings object.
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_model: str = "gemini-3.5-flash-lite"
+
+    # What the "fake" provider always answers. Lets the API run with no model installed.
+    llm_fake_response: str = "```sql\nSELECT count(*) FROM orders\n```"
 
     @property
     def readonly_conninfo(self) -> str:
