@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     max_repairs: int = Field(default=2, ge=0, le=3)
     judge_enabled: bool = False
 
+    audit_log_path: str = "audit/audit.jsonl"
+    max_concurrent_asks: int = Field(default=4, ge=1, le=32)
+
     @property
     def readonly_conninfo(self) -> str:
         """Connection string for the read-only role (the only one the executor may use)."""

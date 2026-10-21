@@ -124,9 +124,12 @@ class AnswerPipeline:
         cfg = self._cfg
         usage = _Usage()
 
-        def fail(stage: str, code: object, message: str | None, repairs: int = 0) -> PipelineResult:
+        def fail(
+            stage: str, code: object, message: str | None, sql: str | None = None
+        ) -> PipelineResult:
             return PipelineResult(
                 ok=False,
+                sql=sql,
                 stage=stage,
                 code=str(code),
                 message=message,
@@ -151,12 +154,12 @@ class AnswerPipeline:
                 gen = self._gen.generate(question, feedback=_feedback(gen.sql, validation))
                 usage.add(gen.response)
                 continue
-            return fail("validate", validation.code, validation.message)
+            return fail("validate", validation.code, validation.message, gen.sql)
 
         # 2. execute the primary answer
         primary = self._runner.execute(validation)
         if not primary.ok:
-            return fail("execute", primary.code, primary.message)
+            return fail("execute", primary.code, primary.message, validation.sql)
         primary_fp = fingerprint(primary)
 
         # 3. self-consistency: do independent samples produce the same result?

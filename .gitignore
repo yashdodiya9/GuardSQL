@@ -20,3 +20,5 @@ evals/.cache/
 *.jpg
 *.jpeg
 *.gif
+
+audit/

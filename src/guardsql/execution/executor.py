@@ -73,6 +73,16 @@ class ReadOnlyExecutor:
     def close(self) -> None:
         self._pool.close()
 
+    def ping(self) -> bool:
+        """True if a pooled connection can run a trivial query. Used by /ready."""
+        try:
+            with self._pool.connection(timeout=self._acquire_timeout_s) as conn:
+                conn.execute("SELECT 1")
+                conn.rollback()
+        except Exception:
+            return False
+        return True
+
     def __enter__(self) -> ReadOnlyExecutor:
         self.open()
         return self

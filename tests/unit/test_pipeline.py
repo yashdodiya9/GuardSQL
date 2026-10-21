@@ -187,3 +187,10 @@ def test_token_usage_is_summed(policy: SchemaPolicy) -> None:
     out = pipe.ask("how many orders")
     assert out.input_tokens > 0 and out.output_tokens > 0
     assert out.usage_complete
+
+
+def test_blocked_query_is_kept_on_the_failure_for_audit(policy: SchemaPolicy) -> None:
+    pipe, _ = make(policy, [PII], FakeRunner({}), samples=1)
+    out = pipe.ask("customer emails")
+    assert not out.ok
+    assert out.sql == PII
