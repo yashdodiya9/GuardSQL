@@ -73,3 +73,15 @@ def test_database_is_the_backstop_if_the_validator_were_bypassed(
     """Send the raw SQL straight to Postgres: the grants alone must refuse it."""
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         ro_conn.execute(sql)  # type: ignore[arg-type]
+
+
+@pytest.mark.integration
+def test_friendly_names_run_in_postgres(ro_conn, live_policy) -> None:  # type: ignore[no-untyped-def]
+    result = validate_sql(
+        "SELECT status, count(*), count(*) FROM orders GROUP BY status ORDER BY count(*) DESC",
+        live_policy,
+    )
+    assert result.ok and result.sql is not None
+    with ro_conn.cursor() as cur:
+        cur.execute(result.sql)
+        assert [d.name for d in cur.description or []] == ["status", "count", "count_2"]

@@ -7,6 +7,7 @@ Comments are dropped on regeneration (sqlglot keeps them unless told not to).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -202,6 +203,9 @@ def _validate(sql: str, policy: SchemaPolicy) -> ValidationResult:
             f"Whole-row reference '{row_ref}' is not allowed; name columns.",
         )
 
+    # 8b. Readable output names instead of qualify()'s _col_N (cosmetic; after all checks).
+    _name_outputs(root)
+
     # 9. Force a row cap on the outermost query.
     limit = _apply_limit(root, policy)
 
@@ -211,6 +215,52 @@ def _validate(sql: str, policy: SchemaPolicy) -> ValidationResult:
         tables=frozenset(tables_used),
         limit=limit,
     )
+
+
+_GENERATED_ALIAS = re.compile(r"_col_\d+")
+
+
+def _name_outputs(root: exp.Expression) -> None:
+    """qualify() names unaliased outputs _col_0, _col_1, ... Give the outermost ones readable
+    names (count, sum, column_3). Only aliases that qualify() invented are touched, and a new
+    name never collides with a column or alias already used in the query, because Postgres
+    resolves ORDER BY names against output names first."""
+    node: exp.Expression = root
+    for _ in range(20):  # peel set operations and parentheses down to the first SELECT
+        if isinstance(node, exp.SetOperation):
+            node = node.this
+        elif isinstance(node, exp.Subquery):
+            node = node.unnest()
+        else:
+            break
+    if not isinstance(node, exp.Select):
+        return
+
+    taken = {c.name for c in root.find_all(exp.Column)}
+    taken |= {a.alias for a in root.find_all(exp.Alias)}
+    renames: dict[str, str] = {}
+    for position, projection in enumerate(node.expressions, start=1):
+        if not isinstance(projection, exp.Alias):
+            continue
+        if not _GENERATED_ALIAS.fullmatch(projection.alias):
+            continue
+        base = (
+            projection.this.key
+            if isinstance(projection.this, exp.AggFunc)
+            else f"column_{position}"
+        )
+        name, suffix = base, 2
+        while name in taken:
+            name, suffix = f"{base}_{suffix}", suffix + 1
+        taken.add(name)
+        renames[projection.alias] = name
+        projection.set("alias", exp.to_identifier(name))
+
+    # If anything referred to a generated alias (for example in ORDER BY), follow the rename.
+    if renames:
+        for column in root.find_all(exp.Column):
+            if not column.table and column.name in renames:
+                column.set("this", exp.to_identifier(renames[column.name]))
 
 
 def _check_tables(
