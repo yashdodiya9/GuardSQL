@@ -15,3 +15,8 @@ htmlcov/
 
 evals/.cache/
 .DS_Store
+
+*.png
+*.jpg
+*.jpeg
+*.gif

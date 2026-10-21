@@ -19,3 +19,19 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy src
       - run: uv run pytest -m "not integration" -v
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync --locked
+      - run: cp .env.example .env
+      - run: docker compose up -d --wait
+      - run: uv run pytest -m integration -v
+      - if: failure()
+        run: docker compose logs db
+      - if: always()
+        run: docker compose down -v
