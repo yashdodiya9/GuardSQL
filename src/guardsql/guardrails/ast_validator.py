@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
@@ -225,7 +226,7 @@ def _name_outputs(root: exp.Expression) -> None:
     names (count, sum, column_3). Only aliases that qualify() invented are touched, and a new
     name never collides with a column or alias already used in the query, because Postgres
     resolves ORDER BY names against output names first."""
-    node: exp.Expression = root
+    node: Any = root
     for _ in range(20):  # peel set operations and parentheses down to the first SELECT
         if isinstance(node, exp.SetOperation):
             node = node.this
