@@ -92,3 +92,17 @@ Cache savings will be measured in M9.
 **Context:** Users and the API need a signal about how much to trust an answer. An LLM judge reads the untrusted question, so it can be talked into agreeing. It also shares the generator's blind spots.
 **Decision:** Confidence is a transparent weighted sum of agreement, repairs and empty results, mapped to HIGH, MEDIUM or LOW. The judge is off by default and runs only in the grey zone. It can veto with a NO, but a YES can never lift a result into HIGH on its own. Judge errors count as UNSURE.
 **Consequences:** The score is explainable in an interview and easy to unit test. The weights are heuristics until M8 calibrates them against the golden set. Confidence is never a security control: the validator and the read-only role remain the real boundary.
+## ADR-016: Append-only metadata audit log that cannot fail a request
+**Context:** Security and cost review needs a record of who asked what and what the system did. The log must not become a second place where sensitive data lives, and a full disk must not take the API down.
+**Decision:** One JSON object per line, holding the question (truncated), outcome, stage and code, the SQL (including blocked SQL), confidence signals, token counts and latency. It never holds result rows. Writes are serialised with a lock, `json.dumps` escapes newlines so questions cannot forge lines, and an `OSError` is logged and swallowed.
+**Consequences:** Blocked attempts are reviewable and the M8 and M9 numbers can be read straight from the log. A file is enough for the free tier, and it can be shipped elsewhere later. Questions can contain personal data, so retention should be limited in production.
+
+## ADR-017: One stable error envelope; internals go to the audit log
+**Context:** Clients need to branch on errors, and raw validator or driver messages can reveal schema details, SQL or credentials.
+**Decision:** Every failure is `{"error": {code, message, request_id, reason?}}` with a stable public code (`QUERY_BLOCKED`, `MODEL_UNAVAILABLE`, `QUERY_TIMEOUT`, ...). Status codes separate user-fixable (422), upstream failures (502, 503, 504) and our bugs (500). Validator detail and rejected SQL are written to the audit log only, and unexpected exceptions return a generic 500.
+**Consequences:** The contract is small and testable, and a frontend can show a helpful message per code. Debugging a user's report needs the request ID and the audit log. `CANNOT_ANSWER` text comes from the model, so a frontend must render it as plain text.
+
+## ADR-018: Bounded concurrency with fast 429, sync endpoints
+**Context:** Each question can trigger several LLM calls, and free tiers have tight rate limits. The pipeline uses blocking drivers.
+**Decision:** Endpoints are plain `def`, so FastAPI runs them in its threadpool. A semaphore (`MAX_CONCURRENT_ASKS`, default 4, below the pool size of 10) limits questions in flight, and extra requests get an immediate `429` with `Retry-After`.
+**Consequences:** A burst cannot exhaust the LLM quota or the database pool, and callers learn quickly instead of queueing. Per-client rate limits and authentication are still missing and belong to deployment in M10.
