@@ -54,7 +54,13 @@ class SQLGenerator:
         self._temperature = temperature
         self._today = today
 
-    def generate(self, question: str) -> GenerationResult:
+    def generate(
+        self,
+        question: str,
+        *,
+        temperature: float | None = None,
+        feedback: str | None = None,
+    ) -> GenerationResult:
         """Never raises for expected failures; they come back as a result."""
         cleaned = sanitize_question(question)
         if not cleaned:
@@ -68,11 +74,14 @@ class SQLGenerator:
                 message=f"Questions are limited to {self._max_question_chars} characters.",
             )
 
+        user = build_user_prompt(cleaned, self._today())
+        if feedback:
+            user += f"\n\n{feedback}"
         request = LLMRequest(
             system=self._system,
-            user=build_user_prompt(cleaned, self._today()),
+            user=user,
             max_output_tokens=self._max_output_tokens,
-            temperature=self._temperature,
+            temperature=self._temperature if temperature is None else temperature,
         )
         try:
             response = self._client.generate(request)

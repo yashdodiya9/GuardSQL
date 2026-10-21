@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # What the "fake" provider always answers. Lets the API run with no model installed.
     llm_fake_response: str = "```sql\nSELECT count(*) FROM orders\n```"
 
+    consistency_samples: int = Field(default=3, ge=1, le=7)
+    sample_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_repairs: int = Field(default=2, ge=0, le=3)
+    judge_enabled: bool = False
+
     @property
     def readonly_conninfo(self) -> str:
         """Connection string for the read-only role (the only one the executor may use)."""
