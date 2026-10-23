@@ -155,6 +155,8 @@ def _validate(sql: str, policy: SchemaPolicy) -> ValidationResult:
 
     # 4. Functions: default-deny.
     for func in root.find_all(exp.Func):
+        if isinstance(func, exp.Connector):
+            continue  # AND / OR / XOR are operators; sqlglot also types them as functions
         if isinstance(func, exp.Anonymous):
             name = func.name.lower()
             if name not in ALLOWED_ANONYMOUS_FUNCTIONS:
