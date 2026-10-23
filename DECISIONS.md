@@ -106,3 +106,8 @@ Cache savings will be measured in M9.
 **Context:** Each question can trigger several LLM calls, and free tiers have tight rate limits. The pipeline uses blocking drivers.
 **Decision:** Endpoints are plain `def`, so FastAPI runs them in its threadpool. A semaphore (`MAX_CONCURRENT_ASKS`, default 4, below the pool size of 10) limits questions in flight, and extra requests get an immediate `429` with `Retry-After`.
 **Consequences:** A burst cannot exhaust the LLM quota or the database pool, and callers learn quickly instead of queueing. Per-client rate limits and authentication are still missing and belong to deployment in M10.
+
+## ADR-021: Benign controls guard against false positives
+**Context:** A security filter that rejects too much fails silently: rejections look like safety. An earlier validator treated sqlglot's typing of AND and OR as function calls, so every query using AND or OR was blocked, and 200+ unit tests and the whole adversarial suite still passed.
+**Decision:** The eval package keeps a list of benign statements that must be accepted, covering common SQL syntax (boolean operators, predicates, arithmetic, casts, subqueries, set operations, window functions), and every golden reference must pass the validator offline. The golden references are also run against the database in an integration test.
+**Consequences:** Over-blocking now fails the build, and accuracy numbers cannot be quietly depressed by the guardrails. New syntax the model produces and the validator wrongly rejects should be added as a control first, then fixed.
