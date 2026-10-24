@@ -111,3 +111,14 @@ Cache savings will be measured in M9.
 **Context:** A security filter that rejects too much fails silently: rejections look like safety. An earlier validator treated sqlglot's typing of AND and OR as function calls, so every query using AND or OR was blocked, and 200+ unit tests and the whole adversarial suite still passed.
 **Decision:** The eval package keeps a list of benign statements that must be accepted, covering common SQL syntax (boolean operators, predicates, arithmetic, casts, subqueries, set operations, window functions), and every golden reference must pass the validator offline. The golden references are also run against the database in an integration test.
 **Consequences:** Over-blocking now fails the build, and accuracy numbers cannot be quietly depressed by the guardrails. New syntax the model produces and the validator wrongly rejects should be added as a control first, then fixed.
+
+## ADR-022: Repair database errors, keep the message away from users
+**Context:** An unknown column in HAVING passed validation and failed in Postgres, and the model never saw the error text, so the same mistake was final.
+**Decision:** A DATABASE_ERROR from the executor feeds its one-line message back to the model in the same repair loop as validator rejections, sharing one budget (MAX_REPAIRS). Cost-gate failures, timeouts and outages are never repaired. The database message goes only into the repair prompt: the API returns a generic error and the audit log keeps the detail.
+**Consequences:** Honest column and grouping mistakes are fixed at the cost of one more cheap call. The error text can echo a literal from the model's own SQL, so it is treated as untrusted input to the prompt, and it is capped at 200 characters by the executor.
+
+## ADR-023: Escalate to a stronger model only on free signals, and sample once by default
+**Context:** Measured on a 42-question golden set: self-consistency tripled latency and tokens with no accuracy gain, the LLM judge flagged wrong answers with 25% precision at 3.6x latency, and a 14B model was 5 points more accurate than the 7B at 3.7x the latency.
+**Decision:** The default is one sample from the cheap model, no judge. A stronger model is tried only after a repairable validator rejection or a database error survives the repair budget, or when the result is empty or all NULL. Adversarial rejections, refusals, cost-gate failures, timeouts and outages never escalate, so bad prompts cannot force expensive calls.
+**Consequences:** Most questions pay the cheap model's latency, and the strong model's cost lands on the few that look broken. Wrong answers that look healthy (misread questions) are invisible to these signals, and both models make them. Escalation rate and its accuracy gain are reported in every eval.
+EOF
