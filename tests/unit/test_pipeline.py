@@ -1,4 +1,6 @@
-from guardsql.execution.executor import ExecutionResult
+import pytest
+
+from guardsql.execution.executor import ExecCode, ExecutionResult
 from guardsql.guardrails.ast_validator import ValidationResult
 from guardsql.guardrails.policy import SchemaPolicy
 from guardsql.hallucination.confidence import Confidence, JudgeVerdict
@@ -194,3 +196,58 @@ def test_blocked_query_is_kept_on_the_failure_for_audit(policy: SchemaPolicy) ->
     out = pipe.ask("customer emails")
     assert not out.ok
     assert out.sql == PII
+
+
+def test_all_null_aggregate_counts_as_empty(policy: SchemaPolicy) -> None:
+    null_row = ExecutionResult(ok=True, columns=("avg",), rows=((None,),))
+    runner = FakeRunner({"orders": null_row})
+    pipe, _ = make(policy, [ORDERS, ORDERS, ORDERS], runner)
+    out = pipe.ask("average order")
+    assert out.signals is not None and out.signals.empty_result
+    assert out.score == 0.75
+
+
+class SequenceRunner:
+    """Returns scripted results in order, whatever the SQL is."""
+
+    def __init__(self, results: list[ExecutionResult]) -> None:
+        self.results = list(results)
+        self.calls: list[str] = []
+
+    def execute(self, validated: ValidationResult) -> ExecutionResult:
+        assert validated.sql is not None
+        self.calls.append(validated.sql)
+        return self.results.pop(0)
+
+
+DB_ERROR = ExecutionResult(
+    ok=False, code=ExecCode.DATABASE_ERROR, message='column "order_id" does not exist'
+)
+
+
+def test_database_error_is_repaired(policy: SchemaPolicy) -> None:
+    runner = SequenceRunner([DB_ERROR, rows(5)])
+    pipe, llm = make(policy, [ORDERS, ORDERS], runner, samples=1)  # type: ignore[arg-type]
+    out = pipe.ask("how many orders")
+    assert out.ok
+    assert out.signals is not None and out.signals.repairs == 1
+    assert "does not exist" in llm.requests[1].user
+    assert len(runner.calls) == 2
+
+
+def test_database_repair_budget_is_enforced(policy: SchemaPolicy) -> None:
+    runner = SequenceRunner([DB_ERROR, DB_ERROR, DB_ERROR])
+    pipe, llm = make(policy, [ORDERS] * 3, runner, samples=1, max_repairs=2)  # type: ignore[arg-type]
+    out = pipe.ask("q")
+    assert not out.ok and out.stage == "execute" and out.code == "DATABASE_ERROR"
+    assert out.sql is not None
+    assert len(llm.requests) == 3
+
+
+@pytest.mark.parametrize("code", [ExecCode.COST_TOO_HIGH, ExecCode.TIMEOUT, ExecCode.UNAVAILABLE])
+def test_other_execution_failures_are_not_repaired(policy: SchemaPolicy, code: ExecCode) -> None:
+    runner = SequenceRunner([ExecutionResult(ok=False, code=code, message="m")])
+    pipe, llm = make(policy, [ORDERS, ORDERS], runner, samples=1)  # type: ignore[arg-type]
+    out = pipe.ask("q")
+    assert not out.ok
+    assert len(llm.requests) == 1

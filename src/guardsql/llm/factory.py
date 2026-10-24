@@ -31,3 +31,11 @@ def build_client(settings: Settings, *, transport: httpx.BaseTransport | None = 
             transport=transport,
         )
     return RetryingClient(inner, max_attempts=settings.llm_max_attempts)
+
+
+def with_model(settings: Settings, model: str) -> Settings:
+    """A copy of the settings that points the same provider at a different model."""
+    field = {"ollama": "ollama_model", "gemini": "gemini_model"}.get(settings.llm_provider)
+    if field is None:
+        return settings
+    return settings.model_copy(update={field: model})

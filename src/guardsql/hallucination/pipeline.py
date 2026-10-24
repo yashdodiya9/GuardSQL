@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from guardsql.config import Settings
-from guardsql.execution.executor import ExecutionResult
+from guardsql.execution.executor import ExecCode, ExecutionResult
 from guardsql.guardrails.ast_validator import Code, ValidationResult, validate_sql
 from guardsql.guardrails.policy import SchemaPolicy
 from guardsql.hallucination.confidence import (
@@ -38,6 +38,10 @@ REPAIRABLE: frozenset[Code] = frozenset(
 
 class Runner(Protocol):
     def execute(self, validated: ValidationResult) -> ExecutionResult: ...
+
+
+class Asker(Protocol):
+    def ask(self, question: str) -> PipelineResult: ...
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,11 @@ class PipelineResult:
     input_tokens: int = 0
     output_tokens: int = 0
     usage_complete: bool = True
+    escalated: bool = False
+    escalation_reason: str | None = None
+    strong_calls: int = 0
+    strong_input_tokens: int = 0
+    strong_output_tokens: int = 0
 
 
 @dataclass
@@ -102,6 +111,23 @@ def _feedback(bad_sql: str, validation: ValidationResult) -> str:
         "Write a corrected query using only tables and columns from the schema. "
         "Reply in the same format."
     )
+
+
+def _db_feedback(sql: str, result: ExecutionResult) -> str:
+    detail = (result.message or "database error")[:300]
+    return (
+        f"Your previous query was:\n```sql\n{sql}\n```\n"
+        f"PostgreSQL rejected it when it ran: {detail}\n"
+        "Write a corrected query using only tables and columns from the schema. "
+        "Reply in the same format."
+    )
+
+
+def _is_empty(execution: ExecutionResult) -> bool:
+    """No rows, or the single all-NULL row that aggregates return over zero rows."""
+    if not execution.rows:
+        return True
+    return len(execution.rows) == 1 and all(value is None for value in execution.rows[0])
 
 
 class AnswerPipeline:
@@ -139,7 +165,7 @@ class AnswerPipeline:
                 usage_complete=usage.complete,
             )
 
-        # 1. generate, validate, repair
+        # 1. generate, validate, execute; repair honest mistakes (validator or database)
         gen = self._gen.generate(question)
         usage.add(gen.response)
         repairs = 0
@@ -147,18 +173,21 @@ class AnswerPipeline:
             if not gen.ok or gen.sql is None:
                 return fail("generate", gen.code, gen.message)
             validation = validate_sql(gen.sql, self._policy)
-            if validation.ok and validation.sql is not None:
+            if not validation.ok or validation.sql is None:
+                if validation.code in REPAIRABLE and repairs < cfg.max_repairs:
+                    repairs += 1
+                    gen = self._gen.generate(question, feedback=_feedback(gen.sql, validation))
+                    usage.add(gen.response)
+                    continue
+                return fail("validate", validation.code, validation.message, gen.sql)
+            primary = self._runner.execute(validation)
+            if primary.ok:
                 break
-            if validation.code in REPAIRABLE and repairs < cfg.max_repairs:
+            if primary.code is ExecCode.DATABASE_ERROR and repairs < cfg.max_repairs:
                 repairs += 1
-                gen = self._gen.generate(question, feedback=_feedback(gen.sql, validation))
+                gen = self._gen.generate(question, feedback=_db_feedback(validation.sql, primary))
                 usage.add(gen.response)
                 continue
-            return fail("validate", validation.code, validation.message, gen.sql)
-
-        # 2. execute the primary answer
-        primary = self._runner.execute(validation)
-        if not primary.ok:
             return fail("execute", primary.code, primary.message, validation.sql)
         primary_fp = fingerprint(primary)
 
@@ -187,7 +216,7 @@ class AnswerPipeline:
             samples_requested=cfg.samples,
             samples_agreeing=agreeing,
             repairs=repairs,
-            empty_result=len(primary.rows) == 0,
+            empty_result=_is_empty(primary),
         )
         pre = base_score(signals, cfg.confidence)
         verdict = None
