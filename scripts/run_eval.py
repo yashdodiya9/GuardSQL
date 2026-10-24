@@ -33,9 +33,10 @@ from guardsql.evals.results import AttackResult, CaseResult
 from guardsql.evals.runner import preflight, run_attacks, run_golden
 from guardsql.execution.executor import ReadOnlyExecutor
 from guardsql.hallucination.judge import SQLJudge
-from guardsql.hallucination.pipeline import AnswerPipeline, PipelineConfig
-from guardsql.llm.factory import build_client
+from guardsql.hallucination.pipeline import AnswerPipeline, Asker, PipelineConfig
+from guardsql.llm.factory import build_client, with_model
 from guardsql.llm.generator import SQLGenerator
+from guardsql.routing import EscalatingPipeline
 from guardsql.schema.introspect import introspect
 
 
@@ -47,6 +48,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="only the first N cases per suite")
     parser.add_argument("--delay", type=float, default=0.0, help="seconds between questions")
     parser.add_argument("--out", default="", help="output path without extension")
+    parser.add_argument("--strong-model", default="", help="enable routing to this model")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -76,6 +78,7 @@ def main() -> int:
         "max_repairs": config.max_repairs,
         "judge": judge is not None,
         "date": datetime.now().strftime("%Y-%m-%d"),
+        "strong_model": args.strong_model or settings.strong_model or None,
     }
 
     golden_results: list[CaseResult] = []
@@ -88,7 +91,22 @@ def main() -> int:
         "",
     ]
     with ReadOnlyExecutor(settings) as executor:
-        pipeline = AnswerPipeline(generator, executor, policy, config=config, judge=judge)
+        primary = AnswerPipeline(generator, executor, policy, config=config, judge=judge)
+        pipeline: Asker = primary
+        strong_name = args.strong_model or settings.strong_model
+        if strong_name:
+            strong_generator = SQLGenerator(
+                build_client(with_model(settings, strong_name)),
+                schema_prompt,
+                max_question_chars=settings.max_question_chars,
+                max_output_tokens=settings.llm_max_output_tokens,
+                temperature=settings.llm_temperature,
+            )
+            strong = AnswerPipeline(
+                strong_generator, executor, policy, config=dataclasses.replace(config, samples=1)
+            )
+            pipeline = EscalatingPipeline(primary, strong)
+
         if args.suite in ("golden", "all"):
             keys = preflight(golden, policy, executor)
             total = len(golden)

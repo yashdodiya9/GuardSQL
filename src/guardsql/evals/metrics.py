@@ -52,6 +52,8 @@ class GoldenSummary:
     calibration: dict[str, tuple[int, int]]  # confidence -> (correct, executed)
     repaired: int
     repaired_correct: int
+    escalated: int
+    escalated_correct: int
     unanswerable: int
     unanswerable_handled: int
     latency_p50_ms: float
@@ -79,6 +81,7 @@ def summarize_golden(results: Sequence[CaseResult]) -> GoldenSummary:
         calibration[key][0] += r.outcome is Outcome.CORRECT
 
     repaired = [r for r in answerable if r.repairs > 0]
+    escalated = [r for r in answerable if r.escalated]
     n = len(results)
     return GoldenSummary(
         total=n,
@@ -98,6 +101,8 @@ def summarize_golden(results: Sequence[CaseResult]) -> GoldenSummary:
         mean_input_tokens=sum(r.input_tokens for r in results) / n if n else 0.0,
         mean_output_tokens=sum(r.output_tokens for r in results) / n if n else 0.0,
         usage_complete=all(r.usage_complete for r in results),
+        escalated=len(escalated),
+        escalated_correct=sum(r.outcome is Outcome.CORRECT for r in escalated),
     )
 
 
@@ -116,6 +121,9 @@ def render_golden(s: GoldenSummary, config: Mapping[str, object]) -> str:
     lines.append(f"| Needed a repair | {s.repaired}/{s.answerable} |")
     if s.repaired:
         lines.append(f"| Correct after repair | {_with_ci(s.repaired_correct, s.repaired)} |")
+    if s.escalated:
+        lines.append(f"| Escalated to the strong model | {s.escalated}/{s.answerable} |")
+        lines.append(f"| Correct after escalation | {_with_ci(s.escalated_correct, s.escalated)} |")
     if s.unanswerable:
         handled = _with_ci(s.unanswerable_handled, s.unanswerable)
         lines.append(f"| Unanswerable questions handled (no data returned) | {handled} |")

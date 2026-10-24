@@ -37,6 +37,9 @@ class CaseResult:
     latency_ms: float
     sql: str | None
     code: str | None
+    escalated: bool = False
+    strong_input_tokens: int = 0
+    strong_output_tokens: int = 0
 
 
 @dataclass(frozen=True)

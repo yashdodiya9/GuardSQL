@@ -105,6 +105,9 @@ def run_golden(
             latency_ms=latency_ms,
             sql=answer.sql,
             code=answer.code,
+            escalated=answer.escalated,
+            strong_input_tokens=answer.strong_input_tokens,
+            strong_output_tokens=answer.strong_output_tokens,
         )
         results.append(result)
         if on_result is not None:
