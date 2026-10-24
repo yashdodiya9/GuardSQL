@@ -10,7 +10,12 @@ from enum import StrEnum
 
 from guardsql.llm.errors import LLMError, LLMErrorKind
 from guardsql.llm.extract import extract_sql
-from guardsql.llm.prompts import build_system_prompt, build_user_prompt, sanitize_question
+from guardsql.llm.prompts import (
+    build_system_prompt,
+    build_user_prompt,
+    needs_current_date,
+    sanitize_question,
+)
 from guardsql.llm.types import LLMClient, LLMRequest, LLMResponse
 
 
@@ -74,7 +79,8 @@ class SQLGenerator:
                 message=f"Questions are limited to {self._max_question_chars} characters.",
             )
 
-        user = build_user_prompt(cleaned, self._today())
+        today = self._today() if needs_current_date(cleaned) else None
+        user = build_user_prompt(cleaned, today)
         if feedback:
             user += f"\n\n{feedback}"
         request = LLMRequest(

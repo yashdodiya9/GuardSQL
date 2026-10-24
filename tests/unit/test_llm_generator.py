@@ -30,8 +30,17 @@ def test_request_sent_to_the_model() -> None:
     make(fake, max_output_tokens=256, temperature=0.0).generate("  orders   per\nstatus ")
     (request,) = fake.requests
     assert SCHEMA in request.system
-    assert request.user == "Today's date: 2026-10-20\n<question>\norders per status\n</question>"
+    assert request.user == "<question>\norders per status\n</question>"
     assert request.max_output_tokens == 256 and request.temperature == 0.0
+
+
+def test_date_is_sent_only_when_the_question_is_about_a_relative_period() -> None:
+    fake = FakeLLM(["SELECT 1"])
+    make(fake).generate("orders placed last month")
+    (request,) = fake.requests
+    assert request.user == (
+        "Today's date: 2026-10-20\n<question>\norders placed last month\n</question>"
+    )
 
 
 def test_system_prompt_is_identical_across_questions() -> None:

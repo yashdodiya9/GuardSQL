@@ -3,8 +3,10 @@ from datetime import date
 import pytest
 
 from guardsql.llm.prompts import (
+    SYSTEM_TEMPLATE,
     build_system_prompt,
     build_user_prompt,
+    needs_current_date,
     sanitize_question,
 )
 
@@ -51,3 +53,41 @@ def test_a_question_cannot_close_the_question_block() -> None:
     user = build_user_prompt(sanitize_question(attack), date(2026, 1, 1))
     assert user.count("<question>") == 1 and user.count("</question>") == 1
     assert user.endswith("</question>")
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How many orders were placed today?",
+        "Revenue last month",
+        "orders in the past 30 days",
+        "sales this year",
+        "What did we sell yesterday",
+        "signups 3 months ago",
+        "year to date revenue",
+    ],
+)
+def test_relative_time_questions_get_the_date(question: str) -> None:
+    assert needs_current_date(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How many customers are there?",
+        "Total order amount per status",
+        "Orders placed in 2024",
+        "Who knows the most about pricing?",
+        "What is the latest order id",
+    ],
+)
+def test_other_questions_do_not(question: str) -> None:
+    assert not needs_current_date(question)
+
+
+def test_user_prompt_without_a_date_has_no_date_line() -> None:
+    assert "Today's date" not in build_user_prompt("How many customers?")
+
+
+def test_system_prompt_says_not_to_filter_by_date_by_default() -> None:
+    assert "never" in SYSTEM_TEMPLATE and "filter on today's date" in SYSTEM_TEMPLATE
