@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Protocol
 
 import psycopg
@@ -10,9 +11,10 @@ from guardsql.config import Settings
 from guardsql.execution.executor import ReadOnlyExecutor
 from guardsql.guardrails.policy import SchemaPolicy
 from guardsql.hallucination.judge import SQLJudge
-from guardsql.hallucination.pipeline import AnswerPipeline, PipelineConfig, PipelineResult
-from guardsql.llm.factory import build_client
+from guardsql.hallucination.pipeline import AnswerPipeline, Asker, PipelineConfig, PipelineResult
+from guardsql.llm.factory import build_client, with_model
 from guardsql.llm.generator import SQLGenerator
+from guardsql.routing import EscalatingPipeline
 from guardsql.schema.introspect import introspect
 
 
@@ -29,9 +31,7 @@ class Answerer(Protocol):
 
 
 class GuardSQLService:
-    def __init__(
-        self, pipeline: AnswerPipeline, executor: ReadOnlyExecutor, policy: SchemaPolicy
-    ) -> None:
+    def __init__(self, pipeline: Asker, executor: ReadOnlyExecutor, policy: SchemaPolicy) -> None:
         self._pipeline = pipeline
         self._executor = executor
         self._policy = policy
@@ -53,14 +53,22 @@ class GuardSQLService:
         judge = SQLJudge(client, schema_prompt) if settings.judge_enabled else None
         executor = ReadOnlyExecutor(settings)
         executor.open()
-        pipeline = AnswerPipeline(
-            generator,
-            executor,
-            policy,
-            config=PipelineConfig.from_settings(settings),
-            judge=judge,
-        )
-        return cls(pipeline, executor, policy)
+        config = PipelineConfig.from_settings(settings)
+        primary = AnswerPipeline(generator, executor, policy, config=config, judge=judge)
+        asker: Asker = primary
+        if settings.strong_model:
+            strong_generator = SQLGenerator(
+                build_client(with_model(settings, settings.strong_model)),
+                schema_prompt,
+                max_question_chars=settings.max_question_chars,
+                max_output_tokens=settings.llm_max_output_tokens,
+                temperature=settings.llm_temperature,
+            )
+            strong = AnswerPipeline(
+                strong_generator, executor, policy, config=dataclasses.replace(config, samples=1)
+            )
+            asker = EscalatingPipeline(primary, strong)
+        return cls(asker, executor, policy)
 
     def ask(self, question: str) -> PipelineResult:
         return self._pipeline.ask(question)
