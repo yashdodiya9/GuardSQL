@@ -7,6 +7,7 @@ from typing import Protocol
 
 import psycopg
 
+from guardsql.cache import CachingPipeline, cache_fingerprint
 from guardsql.config import Settings
 from guardsql.execution.executor import ReadOnlyExecutor
 from guardsql.guardrails.policy import SchemaPolicy
@@ -14,6 +15,7 @@ from guardsql.hallucination.judge import SQLJudge
 from guardsql.hallucination.pipeline import AnswerPipeline, Asker, PipelineConfig, PipelineResult
 from guardsql.llm.factory import build_client, with_model
 from guardsql.llm.generator import SQLGenerator
+from guardsql.llm.prompts import SYSTEM_TEMPLATE
 from guardsql.routing import EscalatingPipeline
 from guardsql.schema.introspect import introspect
 
@@ -68,6 +70,24 @@ class GuardSQLService:
                 strong_generator, executor, policy, config=dataclasses.replace(config, samples=1)
             )
             asker = EscalatingPipeline(primary, strong)
+
+        if settings.cache_max_entries > 0:
+            asker = CachingPipeline(
+                asker,
+                executor,
+                policy,
+                fingerprint=cache_fingerprint(
+                    SYSTEM_TEMPLATE,
+                    schema_prompt,
+                    settings.llm_provider,
+                    settings.ollama_model,
+                    settings.gemini_model,
+                    settings.strong_model,
+                    str(settings.consistency_samples),
+                ),
+                max_entries=settings.cache_max_entries,
+                ttl_seconds=settings.cache_ttl_seconds,
+            )
         return cls(asker, executor, policy)
 
     def ask(self, question: str) -> PipelineResult:

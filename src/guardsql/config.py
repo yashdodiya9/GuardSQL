@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     audit_log_path: str = "audit/audit.jsonl"
     max_concurrent_asks: int = Field(default=4, ge=1, le=32)
 
+    cache_max_entries: int = Field(default=512, ge=0)
+    cache_ttl_seconds: int = Field(default=3600, ge=1)
+
     @property
     def readonly_conninfo(self) -> str:
         """Connection string for the read-only role (the only one the executor may use)."""

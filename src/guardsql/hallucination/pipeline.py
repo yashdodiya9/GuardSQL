@@ -84,6 +84,7 @@ class PipelineResult:
     strong_calls: int = 0
     strong_input_tokens: int = 0
     strong_output_tokens: int = 0
+    cache_hit: bool = False
 
 
 @dataclass

@@ -46,6 +46,7 @@ class AuditEvent:
     row_count: int | None = None
     escalated: bool = False
     escalation_reason: str | None = None
+    cache_hit: bool = False
 
     @classmethod
     def build(
@@ -86,6 +87,7 @@ class AuditEvent:
             row_count=len(result.execution.rows) if result.execution else None,
             escalated=result.escalated,
             escalation_reason=result.escalation_reason,
+            cache_hit=result.cache_hit,
             **base,  # type: ignore[arg-type]
         )
 
