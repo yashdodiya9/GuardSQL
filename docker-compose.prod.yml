@@ -1,0 +1,74 @@
+# Production-like stack: the API plus Postgres. Only the API's port is published.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build --wait
+#
+# Secrets come from your shell or .env. The API container is given an explicit list of
+# variables (no env_file), so it never receives the database admin password.
+name: guardsql-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shop}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-guardsql_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      GUARDSQL_RO_USER: ${POSTGRES_RO_USER:-guardsql_ro}
+      GUARDSQL_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?set POSTGRES_RO_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 so only the real server counts: during first-time init Postgres runs
+      # a temporary server that listens on a unix socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    image: guardsql-api:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-shop}
+      POSTGRES_RO_USER: ${POSTGRES_RO_USER:-guardsql_ro}
+      POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?set POSTGRES_RO_PASSWORD}
+      API_KEYS: ${API_KEYS:?set API_KEYS (see scripts/make_api_key.py)}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      # Not OLLAMA_BASE_URL: a dev .env usually sets that to localhost, which inside a
+      # container means the container itself, not your machine.
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      STRONG_MODEL: ${STRONG_MODEL:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-10}
+      MAX_CONCURRENT_ASKS: ${MAX_CONCURRENT_ASKS:-4}
+      CACHE_MAX_ENTRIES: ${CACHE_MAX_ENTRIES:-512}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-3600}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - auditlog:/app/audit
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:
+  auditlog:
