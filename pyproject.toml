@@ -17,7 +17,6 @@ dependencies = [
     "sqlglot>=25.0",
     "psycopg-pool>=3.3.3",
     "httpx>=0.28.1",
-    "secretstr>=0.1.0",
 ]
 
 [dependency-groups]
