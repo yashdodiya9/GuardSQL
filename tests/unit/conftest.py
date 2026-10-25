@@ -1,5 +1,8 @@
+from collections.abc import Iterator
+
 import pytest
 
+from guardsql.config import get_settings
 from guardsql.guardrails.policy import SchemaPolicy
 
 
@@ -17,3 +20,13 @@ def policy() -> SchemaPolicy:
         },
         restricted_columns=frozenset({"email", "phone", "date_of_birth", "salary"}),
     )
+
+
+@pytest.fixture(autouse=True)
+def hermetic_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Unit tests must not depend on the developer's .env: authentication stays off here
+    unless a test passes its own ClientAuth."""
+    monkeypatch.setenv("API_KEYS", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
