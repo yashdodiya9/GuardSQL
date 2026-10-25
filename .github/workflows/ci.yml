@@ -35,3 +35,22 @@ jobs:
         run: docker compose logs db
       - if: always()
         run: docker compose down -v
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      LLM_PROVIDER: fake
+      API_KEYS: ci:fec81e33141d40f5eb5b98c70ee1b3d9d3cda05452940209412a5e2809fc1da8
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose -f docker-compose.prod.yml up -d --build --wait
+      - name: Smoke test
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/health)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/schema)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-API-Key: ci-smoke-test-key' localhost:8000/v1/schema)" = 200
+      - if: failure()
+        run: docker compose -f docker-compose.prod.yml logs
+      - if: always()
+        run: docker compose -f docker-compose.prod.yml down -v
