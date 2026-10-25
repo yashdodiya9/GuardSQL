@@ -47,6 +47,7 @@ class AuditEvent:
     escalated: bool = False
     escalation_reason: str | None = None
     cache_hit: bool = False
+    client: str | None = None
 
     @classmethod
     def build(
@@ -58,6 +59,7 @@ class AuditEvent:
         latency_ms: float,
         result: PipelineResult | None = None,
         code: str | None = None,
+        client: str | None = None,
     ) -> AuditEvent:
         base = {
             "request_id": request_id,
@@ -65,6 +67,7 @@ class AuditEvent:
             "question": question[:MAX_QUESTION_CHARS],
             "http_status": http_status,
             "latency_ms": round(latency_ms, 1),
+            "client": client,
         }
         if result is None:  # the pipeline never returned: busy, or an unexpected crash
             return cls(ok=False, code=code, **base)  # type: ignore[arg-type]

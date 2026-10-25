@@ -62,6 +62,9 @@ class Settings(BaseSettings):
 
     audit_log_path: str = "audit/audit.jsonl"
     max_concurrent_asks: int = Field(default=4, ge=1, le=32)
+    api_keys: str = ""
+    rate_limit_per_minute: int = Field(default=30, ge=0)
+    rate_limit_burst: int = Field(default=10, ge=1)
 
     cache_max_entries: int = Field(default=512, ge=0)
     cache_ttl_seconds: int = Field(default=3600, ge=1)

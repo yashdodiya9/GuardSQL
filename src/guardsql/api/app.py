@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 import uuid
@@ -8,8 +9,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import BoundedSemaphore
+from typing import Annotated
 
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -23,6 +25,7 @@ from guardsql.api.schemas import (
     SchemaResponse,
     UsageInfo,
 )
+from guardsql.api.security import ClientAuth, RateLimiter, extract_key
 from guardsql.audit import AuditEvent, AuditLog, JsonlAuditLog
 from guardsql.config import get_settings
 from guardsql.hallucination.pipeline import PipelineResult
@@ -41,11 +44,32 @@ _ERRORS: dict[int | str, dict[str, object]] = {
     502: {"model": ErrorResponse},
     503: {"model": ErrorResponse},
     504: {"model": ErrorResponse},
+    401: {"model": ErrorResponse},
 }
 
 
 def _request_id(request: Request) -> str:
     return str(getattr(request.state, "request_id", "unknown"))
+
+
+def authenticate(request: Request) -> str:
+    """Identify the caller or raise 401. Runs before the body is parsed."""
+    auth: ClientAuth = request.app.state.auth
+    if not auth.enabled:
+        return "anonymous"
+    client = auth.identify(extract_key(request))
+    if client is None:
+        log.warning("auth failed request_id=%s", _request_id(request))
+        raise ApiError(
+            401,
+            "UNAUTHORIZED",
+            "A valid API key is required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return client
+
+
+Client = Annotated[str, Depends(authenticate)]
 
 
 def _record(
@@ -56,6 +80,7 @@ def _record(
     started: float,
     result: PipelineResult | None = None,
     code: str | None = None,
+    client: str | None = None,
 ) -> None:
     latency_ms = (time.perf_counter() - started) * 1000
     request.app.state.audit.write(
@@ -66,6 +91,7 @@ def _record(
             latency_ms=latency_ms,
             result=result,
             code=code,
+            client=client,
         )
     )
     log.info("ask request_id=%s status=%s ms=%.0f", _request_id(request), status, latency_ms)
@@ -102,11 +128,24 @@ def _to_response(result: PipelineResult, request_id: str, latency_ms: float) -> 
 
 
 @router.post("/v1/ask", response_model=AskResponse, responses=_ERRORS, tags=["ask"])
-def ask(body: AskRequest, request: Request) -> AskResponse:
+def ask(body: AskRequest, request: Request, client: Client) -> AskResponse:
     started = time.perf_counter()
+    auth: ClientAuth = request.app.state.auth
+    limiter: RateLimiter = request.app.state.limiter
+    wait = limiter.check(client) if auth.enabled else None  # nobody to limit when auth is off
+    if wait is not None:
+        _record(
+            request, body.question, status=429, started=started, code="RATE_LIMITED", client=client
+        )
+        raise ApiError(
+            429,
+            "RATE_LIMITED",
+            "Too many requests from this client. Slow down and retry.",
+            headers={"Retry-After": str(max(1, math.ceil(wait)))},
+        )
     slots: BoundedSemaphore = request.app.state.slots
     if not slots.acquire(blocking=False):
-        _record(request, body.question, status=429, started=started, code="BUSY")
+        _record(request, body.question, status=429, started=started, code="BUSY", client=client)
         raise ApiError(
             429,
             "BUSY",
@@ -116,22 +155,31 @@ def ask(body: AskRequest, request: Request) -> AskResponse:
     try:
         result: PipelineResult = request.app.state.service.ask(body.question)
     except Exception:
-        _record(request, body.question, status=500, started=started, code="INTERNAL")
+        _record(request, body.question, status=500, started=started, code="INTERNAL", client=client)
         raise
     finally:
         slots.release()
 
     if not result.ok:
         error = to_api_error(result)
-        _record(request, body.question, status=error.status, started=started, result=result)
+        _record(
+            request,
+            body.question,
+            status=error.status,
+            started=started,
+            result=result,
+            client=client,
+        )
         raise error
     latency_ms = (time.perf_counter() - started) * 1000
     response = _to_response(result, _request_id(request), latency_ms)
-    _record(request, body.question, status=200, started=started, result=result)
+    _record(request, body.question, status=200, started=started, result=result, client=client)
     return response
 
 
-@router.get("/v1/schema", response_model=SchemaResponse, tags=["meta"])
+@router.get(
+    "/v1/schema", response_model=SchemaResponse, tags=["meta"], dependencies=[Depends(authenticate)]
+)
 def schema(request: Request) -> SchemaResponse:
     """The tables and columns that questions can use (restricted columns are excluded)."""
     return SchemaResponse(tables=request.app.state.service.schema())
@@ -155,6 +203,8 @@ def create_app(
     service: Answerer | None = None,
     audit: AuditLog | None = None,
     max_concurrent_asks: int | None = None,
+    auth: ClientAuth | None = None,
+    limiter: RateLimiter | None = None,
 ) -> FastAPI:
     """Nothing here touches the database or reads settings until startup, so importing
     this module (and the /health test) needs no environment."""
@@ -174,6 +224,12 @@ def create_app(
             else get_settings().max_concurrent_asks
         )
         app.state.slots = BoundedSemaphore(limit)
+        app.state.auth = auth if auth is not None else ClientAuth.from_settings(get_settings())
+        app.state.limiter = (
+            limiter if limiter is not None else RateLimiter.from_settings(get_settings())
+        )
+        if not app.state.auth.enabled:
+            log.warning("authentication is DISABLED (no API_KEYS); local development only")
         try:
             yield
         finally:
