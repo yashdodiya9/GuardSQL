@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "shop"
     postgres_schema: str = "shop"
+    postgres_sslmode: Literal[
+        "disable", "allow", "prefer", "require", "verify-ca", "verify-full"
+    ] = "prefer"
     postgres_ro_user: str = "guardsql_ro"
     postgres_ro_password: str = ""
     # The role is created with CONNECTION LIMIT 10, so the pool may never exceed that.
@@ -78,6 +81,7 @@ class Settings(BaseSettings):
             dbname=self.postgres_db,
             user=self.postgres_ro_user,
             password=self.postgres_ro_password,
+            sslmode=self.postgres_sslmode,
         )
 
     @property
