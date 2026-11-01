@@ -215,6 +215,15 @@ def test_unknown_route_uses_the_envelope() -> None:
     assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
+def test_root_is_a_keyless_pointer_not_a_404() -> None:
+    with client_for(StubService(), MemoryAuditLog()) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["service"] == "GuardSQL" and body["health"] == "/health"
+        assert "/" not in client.get("/openapi.json").json()["paths"]
+
+
 def test_ready_reflects_database() -> None:
     with client_for(StubService(ready=True), MemoryAuditLog()) as client:
         assert client.get("/ready").status_code == 200

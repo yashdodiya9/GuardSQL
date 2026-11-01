@@ -186,6 +186,17 @@ def schema(request: Request) -> SchemaResponse:
     return SchemaResponse(tables=request.app.state.service.schema())
 
 
+@router.get("/", include_in_schema=False)
+def root() -> dict[str, str]:
+    """A pointer for anyone who opens the bare address in a browser. Needs no key."""
+    return {
+        "service": "GuardSQL",
+        "version": __version__,
+        "health": "/health",
+        "ask": "POST /v1/ask (requires an API key)",
+    }
+
+
 @router.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     """Liveness: the process is up. Does not touch the database or the model."""
