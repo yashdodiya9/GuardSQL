@@ -5,7 +5,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import BoundedSemaphore
@@ -13,6 +13,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from guardsql import __version__
@@ -205,6 +206,7 @@ def create_app(
     max_concurrent_asks: int | None = None,
     auth: ClientAuth | None = None,
     limiter: RateLimiter | None = None,
+    cors_origins: Sequence[str] = (),
 ) -> FastAPI:
     """Nothing here touches the database or reads settings until startup, so importing
     this module (and the /health test) needs no environment."""
@@ -282,6 +284,18 @@ def create_app(
         )
         return error_response(
             _request_id(request), ApiError(500, "INTERNAL", "Something went wrong on our side.")
+        )
+
+    if cors_origins:
+        # Added last, so it is the outermost layer and also covers 401/422/429 error responses.
+        # CORS is a browser rule, not access control: the API key is still what protects data.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors_origins),
+            allow_methods=["GET", "POST"],
+            allow_headers=["X-API-Key", "Authorization", "Content-Type", "X-Request-ID"],
+            expose_headers=["Retry-After", "X-Request-ID"],
+            max_age=600,
         )
 
     app.include_router(router)

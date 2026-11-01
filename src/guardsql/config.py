@@ -2,8 +2,12 @@ from functools import lru_cache
 from typing import Literal
 
 from psycopg.conninfo import make_conninfo
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _split_origins(value: str) -> list[str]:
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
 
 
 class Settings(BaseSettings):
@@ -69,8 +73,28 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=30, ge=0)
     rate_limit_burst: int = Field(default=10, ge=1)
 
+    # Comma-separated browser origins allowed to call the API, e.g. https://ui.example.com.
+    # Empty means no CORS headers at all (same-origin use only).
+    cors_allowed_origins: str = ""
+
     cache_max_entries: int = Field(default=512, ge=0)
     cache_ttl_seconds: int = Field(default=3600, ge=1)
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _check_origins(cls, value: str) -> str:
+        for origin in _split_origins(value):
+            if origin == "*" or not origin.startswith(("http://", "https://")):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must list exact origins like https://ui.example.com"
+                )
+            if origin.endswith("/"):
+                raise ValueError("CORS_ALLOWED_ORIGINS entries must not end with a slash")
+        return value
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return _split_origins(self.cors_allowed_origins)
 
     @property
     def readonly_conninfo(self) -> str:
