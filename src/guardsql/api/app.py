@@ -26,7 +26,7 @@ from guardsql.api.schemas import (
     SchemaResponse,
     UsageInfo,
 )
-from guardsql.api.security import ClientAuth, RateLimiter, extract_key
+from guardsql.api.security import ClientAuth, DailyQuota, RateLimiter, extract_key
 from guardsql.audit import AuditEvent, AuditLog, JsonlAuditLog
 from guardsql.config import get_settings
 from guardsql.hallucination.pipeline import PipelineResult
@@ -128,6 +128,12 @@ def _to_response(result: PipelineResult, request_id: str, latency_ms: float) -> 
     )
 
 
+_QUOTA_MESSAGES = {
+    "DAILY_LIMIT": "This API key has used its requests for today. Try again tomorrow.",
+    "DAILY_CAPACITY": "The demo has reached its daily capacity. Try again tomorrow.",
+}
+
+
 @router.post("/v1/ask", response_model=AskResponse, responses=_ERRORS, tags=["ask"])
 def ask(body: AskRequest, request: Request, client: Client) -> AskResponse:
     started = time.perf_counter()
@@ -144,6 +150,17 @@ def ask(body: AskRequest, request: Request, client: Client) -> AskResponse:
             "Too many requests from this client. Slow down and retry.",
             headers={"Retry-After": str(max(1, math.ceil(wait)))},
         )
+    quota: DailyQuota = request.app.state.quota
+    denied = quota.check(client) if auth.enabled else None
+    if denied is not None:
+        code, wait_s = denied
+        _record(request, body.question, status=429, started=started, code=code, client=client)
+        raise ApiError(
+            429,
+            code,
+            _QUOTA_MESSAGES[code],
+            headers={"Retry-After": str(max(1, math.ceil(wait_s)))},
+        )
     slots: BoundedSemaphore = request.app.state.slots
     if not slots.acquire(blocking=False):
         _record(request, body.question, status=429, started=started, code="BUSY", client=client)
@@ -153,6 +170,8 @@ def ask(body: AskRequest, request: Request, client: Client) -> AskResponse:
             "Too many questions are being answered right now. Retry shortly.",
             headers={"Retry-After": "2"},
         )
+    if auth.enabled:
+        quota.record(client)  # only requests that will really be answered use up the quota
     try:
         result: PipelineResult = request.app.state.service.ask(body.question)
     except Exception:
@@ -217,6 +236,7 @@ def create_app(
     max_concurrent_asks: int | None = None,
     auth: ClientAuth | None = None,
     limiter: RateLimiter | None = None,
+    quota: DailyQuota | None = None,
     cors_origins: Sequence[str] = (),
 ) -> FastAPI:
     """Nothing here touches the database or reads settings until startup, so importing
@@ -241,6 +261,7 @@ def create_app(
         app.state.limiter = (
             limiter if limiter is not None else RateLimiter.from_settings(get_settings())
         )
+        app.state.quota = quota if quota is not None else DailyQuota.from_settings(get_settings())
         if not app.state.auth.enabled:
             log.warning("authentication is DISABLED (no API_KEYS); local development only")
         try:

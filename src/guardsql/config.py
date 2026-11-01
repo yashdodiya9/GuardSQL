@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     api_keys: str = ""
     rate_limit_per_minute: int = Field(default=30, ge=0)
     rate_limit_burst: int = Field(default=10, ge=1)
+    # Per UTC day; 0 means no cap. The total protects a free model quota shared by all keys.
+    daily_limit_per_key: int = Field(default=0, ge=0)
+    daily_limit_total: int = Field(default=0, ge=0)
 
     # Comma-separated browser origins allowed to call the API, e.g. https://ui.example.com.
     # Empty means no CORS headers at all (same-origin use only).

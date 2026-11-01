@@ -1,4 +1,4 @@
-"""API-key authentication and per-client rate limiting.
+"""API-key authentication, per-client rate limiting and daily quotas.
 
 The server stores only SHA-256 hashes of keys, so a leaked .env or config dump does not give
 anyone a usable key. Keys are random 256-bit tokens, so a fast hash is appropriate: a slow
@@ -13,6 +13,8 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as day_time
 
 from fastapi import Request
 
@@ -107,3 +109,64 @@ class RateLimiter:
                 return None
             self._buckets[client] = (tokens, now)
             return (1.0 - tokens) / self._rate
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class DailyQuota:
+    """Requests per UTC day: a cap for each client and an overall cap (0 turns a cap off).
+
+    Counted in memory, so a restart resets it. On a free host that sleeps when idle, that makes
+    it a safety net for a free model quota, not an exact ledger.
+    """
+
+    def __init__(
+        self,
+        per_client: int,
+        total: int,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        self._per_client_limit = per_client
+        self._total_limit = total
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._day: date = clock().date()
+        self._counts: dict[str, int] = {}
+        self._total = 0
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> DailyQuota:
+        return cls(settings.daily_limit_per_key, settings.daily_limit_total)
+
+    def _roll(self, now: datetime) -> None:
+        if now.date() != self._day:
+            self._day = now.date()
+            self._counts = {}
+            self._total = 0
+
+    @staticmethod
+    def _seconds_until_midnight(now: datetime) -> float:
+        tomorrow = datetime.combine(now.date() + timedelta(days=1), day_time.min, tzinfo=UTC)
+        return (tomorrow - now).total_seconds()
+
+    def check(self, client: str) -> tuple[str, float] | None:
+        """None if the client may ask, otherwise (error code, seconds until the next UTC day)."""
+        now = self._clock()
+        with self._lock:
+            self._roll(now)
+            wait = self._seconds_until_midnight(now)
+            if self._per_client_limit and self._counts.get(client, 0) >= self._per_client_limit:
+                return "DAILY_LIMIT", wait
+            if self._total_limit and self._total >= self._total_limit:
+                return "DAILY_CAPACITY", wait
+            return None
+
+    def record(self, client: str) -> None:
+        """Count one request that is actually going to be answered."""
+        with self._lock:
+            self._roll(self._clock())
+            self._counts[client] = self._counts.get(client, 0) + 1
+            self._total += 1
