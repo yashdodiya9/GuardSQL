@@ -40,7 +40,8 @@ class ExecutionResult:
     ok: bool
     columns: tuple[str, ...] = ()
     rows: tuple[tuple[Any, ...], ...] = ()
-    # True when the result reached the row limit, so more rows may exist.
+    # True when the service's own row cap cut the result off, so more rows may exist. A query's
+    # own LIMIT ("top 1") being reached is the answer asked for, not truncation.
     row_limit_hit: bool = False
     elapsed_ms: float = 0.0
     plan_cost: float | None = None
@@ -141,7 +142,7 @@ class ReadOnlyExecutor:
                             ok=True,
                             columns=columns,
                             rows=rows,
-                            row_limit_hit=len(rows) >= limit,
+                            row_limit_hit=validated.limit_imposed and len(rows) >= limit,
                             elapsed_ms=elapsed(),
                             plan_cost=stats.total_cost,
                         )

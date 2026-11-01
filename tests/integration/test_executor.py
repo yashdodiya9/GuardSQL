@@ -44,6 +44,20 @@ def test_row_limit_is_applied_and_reported(
     assert result.ok and len(result.rows) == 100 and result.row_limit_hit
 
 
+def test_a_querys_own_limit_is_not_reported_as_truncation(
+    make_executor: MakeExecutor, live_policy: SchemaPolicy
+) -> None:
+    result = run(make_executor(), live_policy, "SELECT id FROM orders ORDER BY id LIMIT 1")
+    assert result.ok and len(result.rows) == 1 and not result.row_limit_hit
+
+
+def test_a_clamped_limit_is_reported_as_truncation(
+    make_executor: MakeExecutor, live_policy: SchemaPolicy
+) -> None:
+    result = run(make_executor(), live_policy, "SELECT id FROM orders LIMIT 999999")
+    assert result.ok and len(result.rows) == 1000 and result.row_limit_hit
+
+
 def test_percent_signs_in_sql_are_not_treated_as_placeholders(
     make_executor: MakeExecutor, live_policy: SchemaPolicy
 ) -> None:

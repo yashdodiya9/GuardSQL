@@ -175,6 +175,27 @@ def test_row_cap_is_enforced(policy: SchemaPolicy, sql: str, expected: int) -> N
     assert result.sql.upper().rstrip().endswith(f"LIMIT {expected}")
 
 
+@pytest.mark.parametrize(
+    ("sql", "imposed"),
+    [
+        ("SELECT id FROM orders", True),
+        ("SELECT id FROM orders LIMIT 1", False),
+        ("SELECT id FROM orders LIMIT 1000", False),
+        ("SELECT id FROM orders LIMIT 999999", True),
+        ("SELECT id FROM orders LIMIT ALL", True),
+        ("SELECT id FROM orders FETCH FIRST 50000 ROWS ONLY", True),
+        ("SELECT id FROM orders UNION SELECT id FROM customers", True),
+        ("SELECT id FROM orders UNION SELECT id FROM customers LIMIT 7", False),
+    ],
+)
+def test_limit_imposed_says_who_chose_the_cap(
+    policy: SchemaPolicy, sql: str, imposed: bool
+) -> None:
+    result = validate_sql(sql, policy)
+    assert result.ok
+    assert result.limit_imposed is imposed
+
+
 def test_offset_is_preserved(policy: SchemaPolicy) -> None:
     result = validate_sql("SELECT id FROM orders LIMIT 10 OFFSET 20", policy)
     assert result.ok and result.sql is not None

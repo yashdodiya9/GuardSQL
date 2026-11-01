@@ -49,6 +49,9 @@ class ValidationResult:
     message: str | None = None
     tables: frozenset[str] = field(default_factory=frozenset)
     limit: int | None = None
+    # True when the service chose the cap (no LIMIT in the query, or one that was clamped or
+    # unbounded). False when the query's own LIMIT was kept: the caller asked for exactly that.
+    limit_imposed: bool = False
 
 
 def _reject(code: Code, message: str) -> ValidationResult:
@@ -210,13 +213,14 @@ def _validate(sql: str, policy: SchemaPolicy) -> ValidationResult:
     _name_outputs(root)
 
     # 9. Force a row cap on the outermost query.
-    limit = _apply_limit(root, policy)
+    limit, limit_imposed = _apply_limit(root, policy)
 
     return ValidationResult(
         ok=True,
         sql=root.sql(dialect=DIALECT, comments=False),
         tables=frozenset(tables_used),
         limit=limit,
+        limit_imposed=limit_imposed,
     )
 
 
@@ -302,16 +306,19 @@ def _whole_row_reference(root: exp.Expression) -> str | None:
     return None
 
 
-def _apply_limit(root: exp.Expression, policy: SchemaPolicy) -> int:
+def _apply_limit(root: exp.Expression, policy: SchemaPolicy) -> tuple[int, bool]:
+    """Returns the enforced cap and whether the service (not the query) chose it."""
     existing = root.args.get("limit")
     wanted = policy.default_limit
+    imposed = True
     if isinstance(existing, exp.Limit):
         value = existing.expression
         if isinstance(value, exp.Literal) and value.is_int:
             wanted = min(int(value.this), policy.max_limit)
+            imposed = int(value.this) > policy.max_limit
         else:  # LIMIT ALL or a computed expression
             wanted = policy.max_limit
     elif existing is not None:  # FETCH FIRST n ROWS
         wanted = policy.max_limit
     root.set("limit", exp.Limit(expression=exp.Literal.number(wanted)))
-    return wanted
+    return wanted, imposed
