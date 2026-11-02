@@ -1,0 +1,8 @@
+# Cloudflare Pages reads this file and applies it to every response.
+# connect-src must list the API origin (VITE_API_BASE); update it if the API moves.
+/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://guardsql.onrender.com; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
