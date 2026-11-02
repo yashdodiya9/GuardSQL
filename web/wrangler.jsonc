@@ -1,0 +1,10 @@
+{
+  // Static site: Cloudflare serves the built files in ./dist from its edge network.
+  // There is no server code, so no "main" entry. public/_headers (copied into dist by Vite)
+  // sets the security headers.
+  "name": "guardsql",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}
