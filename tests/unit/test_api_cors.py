@@ -90,6 +90,29 @@ def test_error_responses_carry_cors_headers_so_the_page_can_read_them() -> None:
     assert response.json()["error"]["code"] == "UNAUTHORIZED"
 
 
+def test_a_server_error_still_carries_cors_headers() -> None:
+    class Exploding(NoService):
+        def ask(self, question: str) -> object:
+            raise RuntimeError("internal detail")
+
+    app = create_app(
+        Exploding(),  # type: ignore[arg-type]
+        auth=ClientAuth({"alice": hash_key(KEY)}),
+        limiter=RateLimiter(0, 1),
+        cors_origins=(UI,),
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/v1/ask",
+            json={"question": "q"},
+            headers={"Origin": UI, "X-API-Key": KEY},
+        )
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == UI
+    assert response.json()["error"]["code"] == "INTERNAL"
+    assert "internal detail" not in response.text
+
+
 def test_settings_parse_a_comma_separated_list() -> None:
     settings = Settings(_env_file=None, cors_allowed_origins=f"{UI}, http://localhost:5173")
     assert settings.cors_origin_list == [UI, "http://localhost:5173"]

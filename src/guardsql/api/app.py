@@ -284,7 +284,12 @@ def create_app(
         incoming = request.headers.get("x-request-id", "")
         request_id = incoming if REQUEST_ID_RE.fullmatch(incoming) else uuid.uuid4().hex
         request.state.request_id = request_id
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # Answered here, inside the CORS layer, so a browser can read the 500 instead of
+            # seeing a misleading "network error".
+            response = await handle_unexpected(request, exc)
         response.headers["X-Request-ID"] = request_id
         return response
 
